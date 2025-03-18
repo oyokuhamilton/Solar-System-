@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Solar System</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; }
+        canvas { display: block; }
+        #info {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            color: white;
+            font-family: Arial, sans-serif;
+            font-size: 18px;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 10px;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">Click a planet or moon to zoom in!</div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r134/three.min.js"></script>
+    <script>
+        // Set up the scene, camera, and renderer
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // Add lighting (the sun)
+        const sunLight = new THREE.PointLight(0xffffff, 1.5, 100);
+        sunLight.position.set(0, 0, 0);
+        scene.add(sunLight);
+        const ambientLight = new THREE.AmbientLight(0x404040, 0.2);
+        scene.add(ambientLight);
+
+        // Create the starfield (background stars)
+        const starCount = 1000;
+        const starGeometry = new THREE.BufferGeometry();
+        const starPositions = new Float32Array(starCount * 3);
+
+        for (let i = 0; i < starCount * 3; i += 3) {
+            starPositions[i] = (Math.random() - 0.5) * 200; // x
+            starPositions[i + 1] = (Math.random() - 0.5) * 200; // y
+            starPositions[i + 2] = (Math.random() - 0.5) * 200; // z
+        }
+
+        starGeometry.setAttribute('position', new THREE.BufferAttribute(starPositions, 3));
+        const starMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 0.1 });
+        const stars = new THREE.Points(starGeometry, starMaterial);
+        scene.add(stars);
+
+        // Create the Sun
+        const sunGeometry = new THREE.SphereGeometry(1, 32, 32);
+        const sunMaterial = new THREE.MeshBasicMaterial({ color: 0xffff00, emissive: 0xffff00 });
+        const sun = new THREE.Mesh(sunGeometry, sunMaterial);
+        scene.add(sun);
+
+        // Planet data (sizes and distances are scaled for visualization)
+        const planets = [
+            { name: "Mercury", radius: 0.2, distance: 2, speed: 0.04, color: 0xaaaaaa, moons: [{ name: "Moon1", radius: 0.05, distance: 0.3, speed: 0.1, color: 0x666666 }] },
+            { name: "Venus", radius: 0.4, distance: 3, speed: 0.03, color: 0xffaa33, moons: [] },
+            { name: "Earth", radius: 0.5, distance: 4, speed: 0.02, color: 0x3366ff, moons: [{ name: "Moon", radius: 0.1, distance: 0.5, speed: 0.08, color: 0x888888 }] },
+            { name: "Mars", radius: 0.3, distance: 5, speed: 0.015, color: 0xff3333, moons: [
+                { name: "Phobos", radius: 0.05, distance: 0.3, speed: 0.12, color: 0x777777 },
+                { name: "Deimos", radius: 0.04, distance: 0.4, speed: 0.09, color: 0x777777 }
+            ]},
+        ];
+
+        // Create planets, their orbits, and moons
+        const planetMeshes = [];
+        const orbitParams = [];
+        const moonMeshes = [];
+        const moonOrbitParams = [];
+
+        planets.forEach((planet, index) => {
+            // Create the planet
+            const geometry = new THREE.SphereGeometry(planet.radius, 32, 32);
+            const material = new THREE.MeshPhongMaterial({ color: planet.color });
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.position.x = planet.distance; // Start position
+            mesh.userData = { name: planet.name, distance: planet.distance }; // For interactivity
+            scene.add(mesh);
+            planetMeshes.push(mesh);
+
+            // Store planet orbit parameters
+            orbitParams.push({
+                distance: planet.distance,
+                speed: planet.speed,
+                angle: Math.random() * Math.PI * 2,
+            });
+
+            // Create an orbit path for the planet
+            const orbitGeometry = new THREE.RingGeometry(planet.distance - 0.02, planet.distance + 0.02, 64);
+            const orbitMaterial = new THREE.MeshBasicMaterial({ color: 0x555555, side: THREE.DoubleSide });
+            const orbit = new THREE.Mesh(orbitGeometry, orbitMaterial);
+            orbit.rotation.x = Math.PI / 2;
+            scene.add(orbit);
+
+            // Create moons for this planet
+            planet.moons.forEach((moon, moonIndex) => {
+                const moonGeometry = new THREE.SphereGeometry(moon.radius, 16, 16);
+                const moonMaterial = new THREE.MeshPhongMaterial({ color: moon.color });
+                const moonMesh = new THREE.Mesh(moonGeometry, moonMaterial);
+                moonMesh.position.x = moon.distance; // Start position relative to planet
+                scene.add(moonMesh);
+                moonMeshes.push({ mesh: moonMesh, parent: mesh, name: moon.name }); // Associate moon with its planet
+
+                // Store moon orbit parameters
+                moonOrbitParams.push({
+                    distance: moon.distance,
+                    speed: moon.speed,
+                    angle: Math.random() * Math.PI * 2,
+                });
+            });
+        });
+
+        // Position the camera
+        camera.position.set(0, 5, 15); // Adjusted to see stars in the background
+        camera.lookAt(0, 0, 0);
+
+        // Add raycaster for interactivity
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        let selectedObject = null;
+
+        // Handle mouse clicks
+        window.addEventListener('click', (event) => {
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects([...planetMeshes, ...moonMeshes.map(m => m.mesh)]);
+
+            if (intersects.length > 0) {
+                selectedObject = intersects[0].object;
+                const name = selectedObject.userData ? selectedObject.userData.name : moonMeshes.find(m => m.mesh === selectedObject)?.name;
+                document.getElementById('info').textContent = `Selected: ${name}`;
+            } else {
+                selectedObject = null;
+                document.getElementById('info').textContent = "Click a planet or moon to zoom in!";
+            }
+        });
+
+        // Animation loop
+        let time = 0;
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Animate planet orbits
+            planetMeshes.forEach((mesh, index) => {
+                const params = orbitParams[index];
+                params.angle += params.speed;
+                mesh.position.x = params.distance * Math.cos(params.angle);
+                mesh.position.z = params.distance * Math.sin(params.angle);
+                mesh.rotation.y += 0.02; // Rotate planets on their axis
+            });
+
+            // Animate moon orbits around their planets
+            moonMeshes.forEach((moonData, index) => {
+                const moon = moonData.mesh;
+                const parentPlanet = moonData.parent;
+                const params = moonOrbitParams[index];
+                params.angle += params.speed;
+
+                // Position moon relative to its planet
+                const moonX = params.distance * Math.cos(params.angle);
+                const moonZ = params.distance * Math.sin(params.angle);
+                moon.position.x = parentPlanet.position.x + moonX;
+                moon.position.z = parentPlanet.position.z + moonZ;
+                moon.position.y = parentPlanet.position.y; // Keep moon on the same plane
+                moon.rotation.y += 0.03; // Rotate moon on its axis
+            });
+
+            // Zoom camera toward selected object
+            if (selectedObject) {
+                const targetPosition = selectedObject.position.clone();
+                targetPosition.y += selectedObject.userData ? 1 : 0.5; // Slightly above planet or moon
+                camera.position.lerp(targetPosition, 0.05);
+                camera.lookAt(selectedObject.position);
+            } else {
+                const defaultPosition = new THREE.Vector3(0, 5, 15);
+                camera.position.lerp(defaultPosition, 0.05);
+                camera.lookAt(0, 0, 0);
+            }
+
+            // Increment time for animations
+            time += 0.05;
+
+            // Render the scene
+            renderer.render(scene, camera);
+        }
+
+        // Handle window resizing
+        window.addEventListener('resize', () => {
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+        });
+
+        // Start the animation
+        animate();
+    </script>
+</body>
+</html>
